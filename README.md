@@ -78,11 +78,43 @@ Build the project:
 npm run build
 ```
 
+### 🐳 Docker Deployment
+
+Build the Docker image:
+
+```bash
+docker build -t medusa-mcp .
+```
+
+Run in STDIO mode (default):
+
+```bash
+docker run -e MEDUSA_BACKEND_URL=https://your-backend.com \
+  -e MEDUSA_USERNAME=admin@example.com \
+  -e MEDUSA_PASSWORD=your-password \
+  medusa-mcp
+```
+
+Run in HTTP mode with authentication:
+
+```bash
+docker run -e TRANSPORT_MODE=http \
+  -e HTTP_PORT=3000 \
+  -e MCP_BEARER_TOKEN=your-secret-token \
+  -e MEDUSA_BACKEND_URL=https://your-backend.com \
+  -e MEDUSA_USERNAME=admin@example.com \
+  -e MEDUSA_PASSWORD=your-password \
+  -p 3000:3000 \
+  medusa-mcp
+```
+
 ---
 
 ## ▶️ Usage
 
-Start the server:
+### STDIO Mode (Local/Default)
+
+For local development with MCP clients:
 
 ```bash
 npm start
@@ -96,18 +128,43 @@ npx @modelcontextprotocol/inspector ./dist/index.js
 
 > **Note:** Restart the Inspector and your browser after each rebuild.
 
+### HTTP Mode (Remote/Production)
+
+For remote access with bearer token authentication:
+
+```bash
+# Development (no authentication)
+TRANSPORT_MODE=http HTTP_PORT=3000 npm start
+
+# Production (with authentication)
+TRANSPORT_MODE=http HTTP_PORT=3000 MCP_BEARER_TOKEN=your-secret-token npm start
+```
+
+Server runs at: [http://localhost:3000](http://localhost:3000)
+
+📖 **See [AUTH_README.md](AUTH_README.md) for complete authentication documentation and API reference.**
+
 ---
 
 ## 🌍 Environment Variables
 
-| Variable              | Description                          |
-|-----------------------|--------------------------------------|
-| `MEDUSA_BACKEND_URL`  | Your Medusa backend URL              |
-| `PUBLISHABLE_KEY`     | Your Medusa publishable API key      |
-| `MEDUSA_USERNAME`     | Medusa admin username (for admin)    |
-| `MEDUSA_PASSWORD`     | Medusa admin password (for admin)    |
+| Variable              | Description                                           | Required |
+|-----------------------|-------------------------------------------------------|----------|
+| `MEDUSA_BACKEND_URL`  | Your Medusa backend URL                               | Yes      |
+| `MEDUSA_USERNAME`     | Medusa admin username (for admin tools)               | Yes      |
+| `MEDUSA_PASSWORD`     | Medusa admin password (for admin tools)               | Yes      |
+| `PUBLISHABLE_KEY`     | Your Medusa publishable API key (for store)           | No       |
+| `TRANSPORT_MODE`      | Transport mode: `stdio` (default) or `http`           | No       |
+| `HTTP_PORT`           | HTTP server port (default: 3000, only for HTTP mode)  | No       |
+| `MCP_BEARER_TOKEN`    | Bearer token for HTTP authentication                  | No*      |
 
-Server runs at: [http://localhost:3000](http://localhost:3000)
+\* Required for production HTTP mode
+
+Copy `.env.example` to `.env` and configure your environment:
+
+```bash
+cp .env.example .env
+```
 
 ---
 
