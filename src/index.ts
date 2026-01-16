@@ -111,7 +111,19 @@ async function startHttpServer(): Promise<void> {
             return;
         }
         
-        // Validate bearer token
+        // Health check endpoint (no auth required)
+        if (req.method === "GET" && url.pathname === "/health") {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({
+                status: "ok",
+                transport: "http/sse",
+                auth: BEARER_TOKEN ? "enabled" : "disabled",
+                activeConnections: transports.size
+            }));
+            return;
+        }
+        
+        // Validate bearer token for all other endpoints
         if (!validateBearerToken(req.headers.authorization)) {
             res.writeHead(401, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ error: "Unauthorized: Invalid or missing bearer token" }));
@@ -121,12 +133,11 @@ async function startHttpServer(): Promise<void> {
         // SSE endpoint - establish connection
         if (req.method === "GET" && url.pathname === "/sse") {
             const transport = new SSEServerTransport("/message", res);
-            await transport.start();
             
             transports.set(transport.sessionId, transport);
             console.error(`SSE connection established: ${transport.sessionId}`);
             
-            // Connect the MCP server to this transport
+            // Connect the MCP server to this transport (this calls transport.start() internally)
             await server.connect(transport);
             
             // Clean up on disconnect
@@ -172,18 +183,6 @@ async function startHttpServer(): Promise<void> {
                 }
             });
             
-            return;
-        }
-        
-        // Health check endpoint
-        if (req.method === "GET" && url.pathname === "/health") {
-            res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ 
-                status: "ok", 
-                transport: "http/sse",
-                auth: BEARER_TOKEN ? "enabled" : "disabled",
-                activeConnections: transports.size
-            }));
             return;
         }
         
