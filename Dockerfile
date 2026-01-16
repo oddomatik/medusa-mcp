@@ -3,11 +3,8 @@ FROM node:22.12-alpine AS builder
 COPY . /app
 WORKDIR /app
 
-# Install Yarn
-RUN corepack enable && corepack prepare yarn@stable --activate
-
 # Install dependencies and build TypeScript code
-RUN yarn install --immutable && yarn build
+RUN npm ci && npm run build
 
 # Set environment variables
 ENV NODE_ENV=production
