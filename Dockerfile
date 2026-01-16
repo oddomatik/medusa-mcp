@@ -3,6 +3,9 @@ FROM node:22.12-alpine AS builder
 COPY . /app
 WORKDIR /app
 
+# Install Yarn
+RUN corepack enable && corepack prepare yarn@stable --activate
+
 # Install dependencies and build TypeScript code
 RUN npm install && npm run build
 
