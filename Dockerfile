@@ -7,7 +7,7 @@ WORKDIR /app
 RUN corepack enable && corepack prepare yarn@stable --activate
 
 # Install dependencies and build TypeScript code
-RUN yarn install --frozen-lockfile && yarn build
+RUN yarn install --immutable && yarn build
 
 # Set environment variables
 ENV NODE_ENV=production
