@@ -1,8 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import { URL } from "node:url";
+import { randomUUID } from "node:crypto";
 import MedusaStoreService from "./services/medusa-store";
 import MedusaAdminService from "./services/medusa-admin";
 
@@ -91,8 +92,17 @@ async function startHttpServer(): Promise<void> {
         console.error("WARNING: No bearer token configured (MCP_BEARER_TOKEN). All requests will be allowed.");
     }
     
-    // Map to track active SSE connections by session ID
-    const transports = new Map<string, SSEServerTransport>();
+    // Create a single MCP server instance
+    const server = await createMcpServer();
+    
+    // Create StreamableHTTPServerTransport with session ID generation (stateful mode)
+    const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID()
+    });
+    
+    // Connect the server to the transport
+    await server.connect(transport);
+    console.error("MCP server connected to Streamable HTTP transport");
     
     const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
         const url = new URL(req.url || "/", `http://${req.headers.host}`);
@@ -100,7 +110,7 @@ async function startHttpServer(): Promise<void> {
         // CORS headers for browser clients
         res.setHeader("Access-Control-Allow-Origin", "*");
         res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-        res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+        res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-MCP-Session-Id");
         
         // Handle preflight requests
         if (req.method === "OPTIONS") {
@@ -114,81 +124,51 @@ async function startHttpServer(): Promise<void> {
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ 
                 status: "ok", 
-                transport: "http/sse",
-                auth: BEARER_TOKEN ? "enabled" : "disabled",
-                activeConnections: transports.size
+                transport: "streamable-http",
+                auth: BEARER_TOKEN ? "enabled" : "disabled"
             }));
             return;
         }
         
-        // Validate bearer token for all other endpoints
+        // Validate bearer token for MCP endpoint
         if (!validateBearerToken(req.headers.authorization)) {
             res.writeHead(401, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ error: "Unauthorized: Invalid or missing bearer token" }));
             return;
         }
         
-        // SSE endpoint - establish connection
-        if (req.method === "GET" && url.pathname === "/sse") {
+        // MCP endpoint - handle all MCP protocol requests
+        if (url.pathname === "/mcp") {
             try {
-                // Create a new MCP server instance for this connection
-                const server = await createMcpServer();
-                const transport = new SSEServerTransport("/message", res);
+                // Read request body for POST requests
+                let parsedBody: unknown = undefined;
                 
-                transports.set(transport.sessionId, transport);
-                console.error(`SSE connection established: ${transport.sessionId}`);
+                if (req.method === "POST") {
+                    let body = "";
+                    for await (const chunk of req) {
+                        body += chunk.toString();
+                    }
+                    
+                    if (body) {
+                        try {
+                            parsedBody = JSON.parse(body);
+                        } catch (error) {
+                            res.writeHead(400, { "Content-Type": "application/json" });
+                            res.end(JSON.stringify({ error: "Invalid JSON" }));
+                            return;
+                        }
+                    }
+                }
                 
-                // Connect the MCP server to this transport
-                await server.connect(transport);
-                
-                // Clean up on disconnect
-                transport.onclose = () => {
-                    console.error(`SSE connection closed: ${transport.sessionId}`);
-                    transports.delete(transport.sessionId);
-                };
+                // Handle the request using the transport
+                await transport.handleRequest(req, res, parsedBody);
             } catch (error) {
-                console.error("Error establishing SSE connection:", error);
-                res.writeHead(500, { "Content-Type": "application/json" });
-                res.end(JSON.stringify({ error: "Failed to establish SSE connection" }));
-            }
-            
-            return;
-        }
-        
-        // Message endpoint - receive messages
-        if (req.method === "POST" && url.pathname === "/message") {
-            const sessionId = url.searchParams.get("sessionId");
-            
-            if (!sessionId) {
-                res.writeHead(400, { "Content-Type": "application/json" });
-                res.end(JSON.stringify({ error: "Missing sessionId parameter" }));
-                return;
-            }
-            
-            const transport = transports.get(sessionId);
-            if (!transport) {
-                res.writeHead(404, { "Content-Type": "application/json" });
-                res.end(JSON.stringify({ error: "Session not found" }));
-                return;
-            }
-            
-            // Read the request body
-            let body = "";
-            req.on("data", (chunk) => {
-                body += chunk.toString();
-            });
-            
-            req.on("end", async () => {
-                try {
-                    const parsedBody = JSON.parse(body);
-                    await transport.handlePostMessage(req, res, parsedBody);
-                } catch (error) {
-                    console.error("Error handling message:", error);
+                console.error("Error handling MCP request:", error);
+                if (!res.headersSent) {
                     res.writeHead(500, { "Content-Type": "application/json" });
                     res.end(JSON.stringify({ error: "Internal server error" }));
                 }
-            });
-            
+            }
             return;
         }
         
@@ -199,9 +179,9 @@ async function startHttpServer(): Promise<void> {
     
     httpServer.listen(HTTP_PORT, () => {
         console.error(`Medusa MCP Server listening on http://localhost:${HTTP_PORT}`);
-        console.error(`SSE endpoint: http://localhost:${HTTP_PORT}/sse`);
-        console.error(`Message endpoint: http://localhost:${HTTP_PORT}/message?sessionId=<sessionId>`);
+        console.error(`MCP endpoint: http://localhost:${HTTP_PORT}/mcp`);
         console.error(`Health check: http://localhost:${HTTP_PORT}/health`);
+        console.error(`Transport: Streamable HTTP (MCP specification compliant)`);
     });
 }
 
