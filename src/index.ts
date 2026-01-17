@@ -3,7 +3,6 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import { URL } from "node:url";
-import { randomUUID } from "node:crypto";
 import MedusaStoreService from "./services/medusa-store";
 import MedusaAdminService from "./services/medusa-admin";
 
@@ -92,17 +91,10 @@ async function startHttpServer(): Promise<void> {
         console.error("WARNING: No bearer token configured (MCP_BEARER_TOKEN). All requests will be allowed.");
     }
     
-    // Create a single MCP server instance
+    // Create a single MCP server instance for stateless mode
+    // In stateless mode, we create one transport per request and close it after handling
     const server = await createMcpServer();
-    
-    // Create StreamableHTTPServerTransport with session ID generation (stateful mode)
-    const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => randomUUID()
-    });
-    
-    // Connect the server to the transport
-    await server.connect(transport);
-    console.error("MCP server connected to Streamable HTTP transport");
+    console.error("MCP server initialized (stateless mode)");
     
     const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
         const url = new URL(req.url || "/", `http://${req.headers.host}`);
@@ -125,6 +117,7 @@ async function startHttpServer(): Promise<void> {
             res.end(JSON.stringify({ 
                 status: "ok", 
                 transport: "streamable-http",
+                mode: "stateless",
                 auth: BEARER_TOKEN ? "enabled" : "disabled"
             }));
             return;
@@ -140,6 +133,14 @@ async function startHttpServer(): Promise<void> {
         // MCP endpoint - handle all MCP protocol requests
         if (url.pathname === "/mcp") {
             try {
+                // Create a new transport for this request (stateless mode pattern)
+                const transport = new StreamableHTTPServerTransport({
+                    sessionIdGenerator: undefined  // Stateless mode
+                });
+                
+                // Connect the server to this transport (only for this request)
+                await server.connect(transport);
+                
                 // Read request body for POST requests
                 let parsedBody: unknown = undefined;
                 
@@ -162,11 +163,14 @@ async function startHttpServer(): Promise<void> {
                 
                 // Handle the request using the transport
                 await transport.handleRequest(req, res, parsedBody);
+                
+                // Close the transport after handling the request (stateless mode cleanup)
+                await transport.close();
             } catch (error) {
                 console.error("Error handling MCP request:", error);
                 if (!res.headersSent) {
                     res.writeHead(500, { "Content-Type": "application/json" });
-                    res.end(JSON.stringify({ error: "Internal server error" }));
+                    res.end(JSON.stringify({ error: "Internal server error", details: String(error) }));
                 }
             }
             return;
@@ -181,7 +185,7 @@ async function startHttpServer(): Promise<void> {
         console.error(`Medusa MCP Server listening on http://localhost:${HTTP_PORT}`);
         console.error(`MCP endpoint: http://localhost:${HTTP_PORT}/mcp`);
         console.error(`Health check: http://localhost:${HTTP_PORT}/health`);
-        console.error(`Transport: Streamable HTTP (MCP specification compliant)`);
+        console.error(`Transport: Streamable HTTP (stateless mode)`);
     });
 }
 
