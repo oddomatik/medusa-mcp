@@ -35,6 +35,13 @@ export default class MedusaAdminService {
         this.adminToken = res.toString();
     }
 
+    // Sanitize parameter names to match ^[a-zA-Z0-9_.-]{1,64}$
+    sanitizeParamName(name: string): string {
+        return name
+            .replace(/[^a-zA-Z0-9_.-]/g, "_") // Replace invalid chars with underscore
+            .slice(0, 64); // Limit to 64 characters
+    }
+
     wrapPath(refPath: string, refFunction: SdkRequestType) {
         return defineTool((z) => {
             let name;
@@ -67,26 +74,27 @@ export default class MedusaAdminService {
                     ...parameters
                         .filter((p) => p.in != "header")
                         .reduce((acc, param) => {
+                            const sanitizedName = this.sanitizeParamName(param.name);
                             switch (param.schema.type) {
                                 case "string":
-                                    acc[param.name] = z.string().optional();
+                                    acc[sanitizedName] = z.string().optional();
                                     break;
                                 case "number":
-                                    acc[param.name] = z.number().optional();
+                                    acc[sanitizedName] = z.number().optional();
                                     break;
                                 case "boolean":
-                                    acc[param.name] = z.boolean().optional();
+                                    acc[sanitizedName] = z.boolean().optional();
                                     break;
                                 case "array":
-                                    acc[param.name] = z
+                                    acc[sanitizedName] = z
                                         .array(z.string())
                                         .optional();
                                     break;
                                 case "object":
-                                    acc[param.name] = z.object({}).optional();
+                                    acc[sanitizedName] = z.object({}).optional();
                                     break;
                                 default:
-                                    acc[param.name] = z.string().optional();
+                                    acc[sanitizedName] = z.string().optional();
                             }
                             return acc;
                         }, {} as any)
