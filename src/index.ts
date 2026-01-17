@@ -30,8 +30,8 @@ function validateBearerToken(authHeader: string | undefined): boolean {
     return match[1] === BEARER_TOKEN;
 }
 
-async function initializeServer(): Promise<{ server: McpServer; tools: any[] }> {
-    console.error("Initializing Medusa MCP Server...");
+async function createMcpServer(): Promise<McpServer> {
+    console.error("Creating new MCP server instance...");
     const medusaStoreService = new MedusaStoreService();
     const medusaAdminService = new MedusaAdminService();
     let tools = [];
@@ -68,12 +68,12 @@ async function initializeServer(): Promise<{ server: McpServer; tools: any[] }> 
         );
     });
 
-    return { server, tools };
+    return server;
 }
 
 async function startStdioServer(): Promise<void> {
     console.error("Starting Medusa Store MCP Server in STDIO mode...");
-    const { server } = await initializeServer();
+    const server = await createMcpServer();
     
     const transport = new StdioServerTransport();
     console.error("Connecting server to STDIO transport...");
@@ -90,8 +90,6 @@ async function startHttpServer(): Promise<void> {
     } else {
         console.error("WARNING: No bearer token configured (MCP_BEARER_TOKEN). All requests will be allowed.");
     }
-    
-    const { server } = await initializeServer();
     
     // Map to track active SSE connections by session ID
     const transports = new Map<string, SSEServerTransport>();
@@ -114,8 +112,8 @@ async function startHttpServer(): Promise<void> {
         // Health check endpoint (no auth required)
         if (req.method === "GET" && url.pathname === "/health") {
             res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({
-                status: "ok",
+            res.end(JSON.stringify({ 
+                status: "ok", 
                 transport: "http/sse",
                 auth: BEARER_TOKEN ? "enabled" : "disabled",
                 activeConnections: transports.size
@@ -132,19 +130,27 @@ async function startHttpServer(): Promise<void> {
         
         // SSE endpoint - establish connection
         if (req.method === "GET" && url.pathname === "/sse") {
-            const transport = new SSEServerTransport("/message", res);
-            
-            transports.set(transport.sessionId, transport);
-            console.error(`SSE connection established: ${transport.sessionId}`);
-            
-            // Connect the MCP server to this transport (this calls transport.start() internally)
-            await server.connect(transport);
-            
-            // Clean up on disconnect
-            transport.onclose = () => {
-                console.error(`SSE connection closed: ${transport.sessionId}`);
-                transports.delete(transport.sessionId);
-            };
+            try {
+                // Create a new MCP server instance for this connection
+                const server = await createMcpServer();
+                const transport = new SSEServerTransport("/message", res);
+                
+                transports.set(transport.sessionId, transport);
+                console.error(`SSE connection established: ${transport.sessionId}`);
+                
+                // Connect the MCP server to this transport
+                await server.connect(transport);
+                
+                // Clean up on disconnect
+                transport.onclose = () => {
+                    console.error(`SSE connection closed: ${transport.sessionId}`);
+                    transports.delete(transport.sessionId);
+                };
+            } catch (error) {
+                console.error("Error establishing SSE connection:", error);
+                res.writeHead(500, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ error: "Failed to establish SSE connection" }));
+            }
             
             return;
         }
